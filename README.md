@@ -69,7 +69,15 @@ Meter Cannon, Rapier o Ammo daría un coche que se siente mal, así que el motor
 - **Postes y travesaño**: colisión contra segmentos (cápsulas), no contra planos.
 - **Conducción sobre superficies**: la base local se reconstruye contra la normal de
   contacto, así que conducir por paredes y techo usa exactamente el mismo código que
-  conducir por el suelo. La fuerza de pegado se aplica solo por encima de cierta velocidad.
+  conducir por el suelo.
+- **Curvas de unión**: suelo y techo empalman con las paredes mediante un cilindro
+  cóncavo (`A.fill`), no un ángulo recto. Se sube rodando en lugar de estrellarse, y la
+  curva es tangente a las dos superficies, así que el relevo no tiene escalón. La boca de
+  la portería interrumpe la curva de abajo, igual en la física que en la geometría.
+- **Pegado a superficies**: una holgura de suspensión asienta el coche a ras de la
+  superficie que roza — sin ella sale tangente de la curva y sube junto a la pared sin
+  llegar a tocarla. La fuerza de pegado se desvanece al frenar: engancharse exige
+  velocidad, quedarse pegado exige mucha menos, y en el techo la gravedad acaba ganando.
 - **Momento angular del balón**: fricción de contacto que convierte velocidad tangencial
   en giro usando el tensor de inercia de una esfera (`I = ⅖mr²`), más **fuerza de Magnus**
   (`F ∝ ω × v`). Los golpes descentrados imprimen efecto y los tiros curvan de verdad.
@@ -116,7 +124,7 @@ npm install
 npm test
 ```
 
-Comprueba:
+Comprueba el balón (`test/physics.test.mjs`):
 
 1. **Contención** — 6 000 trayectorias aleatorias a velocidad máxima con giro aleatorio.
    El balón nunca debe salir de la arena por ningún plano, chaflán o esquina.
@@ -126,13 +134,23 @@ Comprueba:
    mismo tiro sin giro.
 5. **Detección de gol** — la línea de gol registra correctamente.
 
+Y la arena curva con el coche encima (`test/arena.test.mjs`), que conduce un coche real
+extraído del HTML:
+
+6. **Empalme sin escalón** — la curva es tangente al suelo y a la pared.
+7. **El balón sube la curva** y vuelve rodando a la cancha, y un tiro raso sigue entrando.
+8. **Subir la pared** — el coche trepa la curva y conduce tumbado contra la pared.
+9. **Techo** — llega arriba, aguanta con gas y la gravedad lo despega al frenar.
+10. **Sin efectos colaterales** — el salto sigue despegando y el volante gira a su lado.
+
 ---
 
 ## Estructura
 
 ```
 index.html                  el juego completo
-test/physics.test.mjs       banco de pruebas del motor (extrae del HTML)
+test/physics.test.mjs       banco del balón (extrae del HTML)
+test/arena.test.mjs         banco de la arena curva y la conducción (extrae del HTML)
 .github/workflows/ci.yml    CI en cada push
 vercel.json                 despliegue estático
 ```

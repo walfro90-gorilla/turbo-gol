@@ -250,6 +250,7 @@ if(typeof THREE==='undefined'){document.body.innerHTML='<div style="padding:40px
 const S=1/50;
 const A={hx:5120*S,hz:4096*S,ceil:2044*S,cham:1152*S,goalW:893*S,goalH:642.775*S,goalD:880*S};
 A.diag=(A.hx+A.hz-A.cham)*Math.SQRT1_2;
+A.fill=384*S;   // radio de la curva suelo↔pared — subir para que cueste menos subirse
 const BALL={r:92.75*S,g:650*S,drag:.030,rest:.60,rollFric:1.55,vmax:6000*S,
             mu:.42,spinMax:6,spinDrag:.42,magnus:.021};
 const CAR={hl:59*S,hw:42*S,hh:18*S,g:650*S,
@@ -257,7 +258,9 @@ const CAR={hl:59*S,hw:42*S,hh:18*S,g:650*S,
   aThrottle:1600*S,aBoost:991*S,aBrake:3500*S,aCoast:525*S,boostUse:33.3,
   jumpV:292*S,jumpHoldA:1458*S,jumpHold:.20,jumpTimeout:1.25,
   flipV:500*S,flipTime:.65,
-  aPitch:12.46,aYaw:9.11,aRoll:38.34,angMax:5.5,angDamp:4.2,stick:750*S};
+  aPitch:12.46,aYaw:9.11,aRoll:38.34,angMax:5.5,angDamp:4.2,
+  // pegado a pared/techo: stick > g para aguantar el techo, y se desvanece al frenar
+  stick:1250*S,stickOn:11,stickOff:4,stickFull:17,skin:14*S};
 const TEAM=[
  {name:'NARANJA',col:0xff6a1f,soft:0xffb066,css:'#ff6a1f',defX:-A.hx,atkX:A.hx},
  {name:'AZUL',col:0x2aa8ff,soft:0x95dcff,css:'#2aa8ff',defX:A.hx,atkX:-A.hx}];
@@ -455,11 +458,47 @@ function addWalls(){
   gg.setIndex(idx);gg.computeVertexNormals();
   scene.add(new THREE.Mesh(gg,new THREE.MeshPhongMaterial({color:0x0d2438,transparent:true,opacity:.18,
     side:THREE.DoubleSide,shininess:80,specular:0x3a7aa8,depthWrite:false})));
+  // curvas de unión: barrido del mismo cuarto de círculo que resuelve fillet().
+  // Normales analíticas (nada de facetas) y solo cara interior, para que la arena se
+  // siga viendo desde fuera igual que a través del cristal de las paredes.
+  {
+    const rp=[],rn=[],ri=[],R=A.fill,ST=8;let rv=0;
+    for(let i=0;i<OCT.length;i++){
+      const a=OCT[i],b=OCT[(i+1)%OCT.length];
+      const dx=b[0]-a[0],dz=b[1]-a[1],L=Math.hypot(dx,dz);
+      const ex=dz/L,ez=-dx/L;                       // normal hacia fuera del octágono
+      const SEG=Math.max(2,Math.round(L/5));
+      for(const sy of[-1,1])for(let s=0;s<SEG;s++){ // sy=-1 curva del suelo, +1 la del techo
+        const t0=s/SEG,t1=(s+1)/SEG,tm=(t0+t1)/2;
+        // la boca de la portería interrumpe la curva de abajo, igual que en la física
+        if(sy<0&&Math.abs(Math.abs(a[0]+dx*tm)-A.hx)<.01&&Math.abs(a[1]+dz*tm)<A.goalW)continue;
+        const base=sy<0?0:A.ceil;
+        for(let k=0;k<ST;k++){
+          const P=(t,q)=>{
+            const o=R*(Math.sin(q)-1),sn=Math.sin(q),cs=Math.cos(q);
+            rp.push(a[0]+dx*t+ex*o,base-sy*R*(1-cs),a[1]+dz*t+ez*o);
+            rn.push(-sn*ex,-sy*cs,-sn*ez);};       // normal hacia dentro de la arena
+          const q0=k/ST*Math.PI/2,q1=(k+1)/ST*Math.PI/2;
+          P(t0,q0);P(t1,q0);P(t1,q1);P(t0,q1);
+          if(sy<0)ri.push(rv,rv+1,rv+2,rv,rv+2,rv+3);
+          else ri.push(rv,rv+2,rv+1,rv,rv+3,rv+2);
+          rv+=4;}}}
+    const rg=new THREE.BufferGeometry();
+    rg.setAttribute('position',new THREE.Float32BufferAttribute(rp,3));
+    rg.setAttribute('normal',new THREE.Float32BufferAttribute(rn,3));
+    rg.setIndex(ri);
+    const rm=new THREE.Mesh(rg,new THREE.MeshStandardMaterial({color:0x16283a,roughness:.62,metalness:.2,
+      polygonOffset:true,polygonOffsetFactor:-1}));
+    rm.receiveShadow=true;scene.add(rm);
+  }
   const lp=[];
   for(let i=0;i<OCT.length;i++){
     const a=OCT[i],b=OCT[(i+1)%OCT.length];
-    [0,A.ceil,A.ceil*.5].forEach(y=>lp.push(a[0],y,a[1],b[0],y,b[1]));
-    for(let t=0;t<=1.001;t+=.1){const x=lerp(a[0],b[0],t),z=lerp(a[1],b[1],t);lp.push(x,0,z,x,A.ceil,z);}}
+    // las guías arrancan donde acaba la curva, si no quedan enterradas en la rampa
+    [A.fill,A.ceil-A.fill,A.ceil*.5].forEach(y=>lp.push(a[0],y,a[1],b[0],y,b[1]));
+    for(let t=0;t<=1.001;t+=.1){const x=lerp(a[0],b[0],t),z=lerp(a[1],b[1],t);lp.push(x,A.fill,z,x,A.ceil-A.fill,z);}
+    const dx=b[0]-a[0],dz=b[1]-a[1],L=Math.hypot(dx,dz),ex=dz/L*A.fill,ez=-dx/L*A.fill;
+    lp.push(a[0]-ex,.02,a[1]-ez,b[0]-ex,.02,b[1]-ez);}   // pie de la curva
   const lg=new THREE.BufferGeometry();
   lg.setAttribute('position',new THREE.Float32BufferAttribute(lp,3));
   scene.add(new THREE.LineSegments(lg,new THREE.LineBasicMaterial({color:0x00e5c7,transparent:true,opacity:.22})));
@@ -693,7 +732,26 @@ const WALLS=[];{
   for(const sx of[1,-1])for(const sz of[1,-1])WALLS.push({n:new V3(sx*s,0,sz*s),d:A.diag});}
 const _a=new V3(),_b=new V3(),_u=new V3(),_w=new V3(),_z=new V3(),_n=new V3(),
       _ax=new V3(),_ay=new V3(),_az=new V3(),_t=new V3(),_d=new V3(),_p=new V3(),
-      _j=new V3(),_k=new V3(),_qq=new Q();
+      _j=new V3(),_k=new V3(),_fn=new V3(),_qq=new Q();
+
+/* Curva de unión pared↔suelo y pared↔techo: cilindro cóncavo de radio A.fill con el
+   eje a esa distancia de las dos superficies. Sustituye a la esquina en vivo, así el
+   coche sube rodando en vez de estrellarse. Es tangente a las dos, o sea que el relevo
+   entre superficies no tiene escalón.
+   h = altura del eje, s = +1 hacia el techo, -1 hacia el suelo.
+   Deja en _fn la radial hacia fuera; devuelve la distancia al eje, o -1 si no aplica. */
+function fillet(p,w,h,s){
+  const du=w.n.dot(p)-(w.d-A.fill),dy=(p.y-h)*s;
+  if(du<0||dy<0)return -1;                      // fuera del cuadrante de la curva
+  const dist=Math.hypot(du,dy);
+  if(dist<1e-5)return -1;
+  _fn.copy(w.n).multiplyScalar(du/dist);_fn.y=dy*s/dist;
+  return dist;
+}
+const filletAt=(p,w)=>{                         // prueba la curva de abajo y la de arriba
+  const f=fillet(p,w,A.fill,-1);
+  return f>0?f:fillet(p,w,A.ceil-A.fill,1);
+};
 const inMouth=(p,m)=>Math.abs(p.z)<A.goalW-(m||0)&&p.y<A.goalH-(m||0)&&p.y>-1;
 
 function segCollide(p,r,ax,ay,az,bx,by,bz,segR,vel,rest){
@@ -740,6 +798,15 @@ function ballStep(pos,vel,spin,dt,fx){
   for(const w of WALLS){
     if(w.goal&&inMouth(pos,0))continue;
     if(w.goal&&inG)continue;
+    const fd=filletAt(pos,w);
+    if(fd>0){                                   // curva de unión
+      const fp=fd+r-A.fill;
+      if(fp>0){
+        pos.addScaledVector(_fn,-fp);
+        const vn=vel.dot(_fn);
+        if(vn>0){hard=Math.max(hard,vn);vel.addScaledVector(_fn,-(1+BALL.rest)*vn);}
+        contactSpin(vel,spin,_p.copy(_fn).negate(),r);}
+      continue;}
     const pen=w.n.dot(pos)+r-w.d;
     if(pen>0){
       pos.addScaledVector(w.n,-pen);
@@ -773,20 +840,44 @@ function computePrediction(){
     if(predLand<0&&i>1&&PRED[i].y<BALL.r*1.35)predLand=i;}
 }
 
+const _gn=new V3(0,1,0);
+/* Holgura de suspensión: a menos de CAR.skin de una superficie el coche se asienta a
+   ras de ella en vez de quedarse flotando. Sin esto sale tangente de la curva y sube
+   rozando la pared sin llegar a tocarla nunca. Separarse rápido (saltar) sí despega. */
+const touch=(pen,sep)=>pen>0||(pen>-CAR.skin&&sep<.5);
 function carArena(car){
   _ax.set(1,0,0).applyQuaternion(car.quat);
   _ay.set(0,1,0).applyQuaternion(car.quat);
   _az.set(0,0,1).applyQuaternion(car.quat);
-  let ground=false,wallN=null,wallPen=0;
+  let ground=false,wallN=null,wallPen=-1e9;
+  _gn.set(0,1,0);
   const eY=CAR.hw*Math.abs(_ax.y)+CAR.hh*Math.abs(_ay.y)+CAR.hl*Math.abs(_az.y);
-  if(eY-car.pos.y>0){car.pos.y=eY;if(car.vel.y<0)car.vel.y*=-.12;ground=true;}
-  if(car.pos.y+eY>A.ceil){car.pos.y=A.ceil-eY;if(car.vel.y>0)car.vel.y*=-.12;wallN=_k.set(0,-1,0).clone();}
+  const pg=eY-car.pos.y;
+  if(touch(pg,car.vel.y)){
+    car.pos.y=eY;if(car.vel.y<0)car.vel.y*=-.12;
+    ground=true;}
+  const pc=car.pos.y+eY-A.ceil;
+  if(touch(pc,-car.vel.y)){
+    car.pos.y=A.ceil-eY;if(car.vel.y>0)car.vel.y*=-.12;
+    wallPen=pc;wallN=_k.set(0,-1,0).clone();}
   const inG=Math.abs(car.pos.x)>A.hx;
   for(const w of WALLS){
     if(w.goal&&(inMouth(car.pos,-1)||inG))continue;
+    const fd=filletAt(car.pos,w);
+    if(fd>0){                                   // curva de unión: rampa entre superficies
+      const fe=CAR.hw*Math.abs(_ax.dot(_fn))+CAR.hh*Math.abs(_ay.dot(_fn))+CAR.hl*Math.abs(_az.dot(_fn));
+      const fp=fd+fe-A.fill;
+      if(touch(fp,-car.vel.dot(_fn))){
+        car.pos.addScaledVector(_fn,-fp);
+        {const vn=car.vel.dot(_fn);
+         if(vn>0)car.vel.addScaledVector(_fn,-vn*1.02);}
+        // el tramo tumbado de la curva es suelo; el empinado ya cuenta como pared
+        if(_fn.y<-.3){ground=true;_gn.copy(_fn).negate();}
+        else if(fp>wallPen){wallPen=fp;wallN=_fn.clone().negate();}}
+      continue;}
     const e=CAR.hw*Math.abs(_ax.dot(w.n))+CAR.hh*Math.abs(_ay.dot(w.n))+CAR.hl*Math.abs(_az.dot(w.n));
     const pen=w.n.dot(car.pos)+e-w.d;
-    if(pen>0){
+    if(touch(pen,-car.vel.dot(w.n))){
       car.pos.addScaledVector(w.n,-pen);
       const vn=car.vel.dot(w.n);
       if(vn>0)car.vel.addScaledVector(w.n,-vn*1.02);
@@ -796,13 +887,16 @@ function carArena(car){
     if(Math.abs(car.pos.x)+CAR.hl>back){car.pos.x=sd*(back-CAR.hl);car.vel.x*=-.2;}
     for(const sz of[1,-1])if(car.pos.z*sz+CAR.hw>A.goalW-.2){car.pos.z=sz*(A.goalW-.2-CAR.hw);car.vel.z*=-.2;}
     if(car.pos.y>A.goalH-2){car.pos.y=A.goalH-2;if(car.vel.y>0)car.vel.y=0;}}
-  car.onGround=ground;car.onSurf=false;
-  const spd=car.vel.length();
-  if(wallN&&spd>14&&(!ground||wallN.y<.15)){
+  car.onGround=ground;
+  // histéresis: engancharse a una pared exige velocidad, quedarse pegado mucha menos
+  const wasSurf=car.onSurf&&car.surfN.y<.9;
+  car.onSurf=false;
+  const spd=car.vel.length(),need=wasSurf?CAR.stickOff:CAR.stickOn;
+  if(wallN&&spd>need&&(!ground||wallN.y<.15)){
     _t.set(0,0,1).applyQuaternion(car.quat);
     if(Math.abs(_t.dot(wallN))<.86){car.onSurf=true;car.surfN.copy(wallN);return;}}
-  if(ground){car.onSurf=true;car.surfN.set(0,1,0);}
-  else if(wallN&&spd>14){car.onSurf=true;car.surfN.copy(wallN);}
+  if(ground){car.onSurf=true;car.surfN.copy(_gn);}
+  else if(wallN&&spd>need){car.onSurf=true;car.surfN.copy(wallN);}
 }
 function alignSurface(car,t){
   const n=car.surfN;
@@ -890,10 +984,13 @@ function stepCar(car,dt){
       _b.crossVectors(n,_a).normalize();}
     car.vel.copy(_a).multiplyScalar(vf).addScaledVector(_b,vr).addScaledVector(n,Math.min(vn,0));
     car.vel.y-=CAR.g*dt;
-    if(n.y<.9&&spd>10)car.vel.addScaledVector(n,-CAR.stick*dt);
+    // el pegado se desvanece al frenar: en el techo la gravedad acaba ganando y caes
+    if(n.y<.9){
+      const hold=clamp((spd-CAR.stickOff)/(CAR.stickFull-CAR.stickOff),0,1);
+      if(hold>0)car.vel.addScaledVector(n,-CAR.stick*hold*dt);}
     car.jumps=0;car.canFlip=true;car.jumpT=0;car.ang.set(0,0,0);
     _ay.set(0,1,0).applyQuaternion(car.quat);
-    if(_ay.y<-.2&&spd<6){car.uprightT+=dt;
+    if(n.y>.9&&_ay.y<-.2&&spd<6){car.uprightT+=dt;
       if(car.uprightT>.8){_qq.setFromAxisAngle(_t.set(0,0,1),Math.PI);car.quat.multiply(_qq);car.pos.y+=1.2;car.uprightT=0;}}
     else car.uprightT=0;
   } else {
@@ -1398,6 +1495,7 @@ function readInput(){
     const sBtn=!!(bt[9]&&bt[9].pressed);if(sBtn&&!padPrevStart)togglePause();padPrevStart=sBtn;
     lookBack=!!(bt[10]&&bt[10].pressed);
   } else lookBack=!!keys['q'];
+  st=-st;                       // + = derecha (el yaw del motor gira sobre +n = izquierda)
   I.drift=drift;I.boost=playing&&boost;I.jump=playing&&jump;
   I.th=playing?clamp(up-dn,-1,1):0;
   I.st=playing?clamp(st,-1,1):0;

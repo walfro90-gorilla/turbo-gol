@@ -5,19 +5,20 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 ## Comandos
 
 ```bash
-npm install          # solo instala `three` (0.128.0) para el test; el juego no lo necesita
-npm test             # node test/physics.test.mjs — banco de física, exit 1 si falla
-npm start            # npx serve . (opcional: index.html abre directo con file://)
-vercel --prod        # despliegue estático
+npm install                     # solo instala `three` (0.128.0) para los tests; el juego no lo necesita
+npm test                        # physics (balón) + arena (curvas y conducción), exit 1 si falla
+node test/arena.test.mjs        # un solo banco
+npm start                       # npx serve . (opcional: index.html abre directo con file://)
+vercel --prod                   # despliegue estático
 ```
 
-No hay build, bundler, linter ni formateador. No hay runner de tests: `test/physics.test.mjs`
-es un script suelto con bloques numerados. Para correr un solo bloque, comentar los otros
+No hay build, bundler, linter ni formateador. No hay runner de tests: cada banco es un
+script suelto con bloques numerados. Para correr un solo bloque, comentar los otros
 bloques `{ ... }` del archivo.
 
 ## Arquitectura
 
-Todo el juego vive en `index.html` (~1735 líneas): `<style>` (7–139), DOM de la UI (139–239),
+Todo el juego vive en `index.html` (~1830 líneas): `<style>` (7–139), DOM de la UI (139–239),
 `<script src>` de Three.js r128 desde CDN (global `THREE`, **no** módulo ES), y un único
 IIFE `'use strict'` desde la línea 241 hasta el final.
 
@@ -52,6 +53,19 @@ Motor arcade escrito a mano, sin librería de física. Puntos que se rompen fác
   Cualquier cambio ahí afecta las tres cosas.
 - `stepCar` reconstruye la base local contra la normal de contacto, así que conducir por
   paredes/techo comparte código con conducir por suelo — no bifurcar por superficie.
+- `fillet()` sustituye las esquinas suelo↔pared y techo↔pared por un cilindro cóncavo de
+  radio `A.fill`, tangente a ambas superficies (por eso el relevo no tiene escalón). La
+  usan coche y balón, y la geometría de `addWalls` barre exactamente la misma curva: si
+  cambias `A.fill` o la ecuación, cambian las tres cosas a la vez.
+- `touch()` da holgura de suspensión (`CAR.skin`): rozar una superficie asienta el coche
+  a ras de ella. Sin eso el coche sale tangente de la curva y sube junto a la pared sin
+  tocarla nunca. El guardia `sep<.5` es lo único que impide que se trague el salto.
+- Pegado a pared/techo: `CAR.stickOn`/`stickOff` son histéresis (enganchar cuesta,
+  soltarse cuesta menos) y `stickFull` la rampa de la fuerza. En el techo `CAR.stick`
+  debe superar la gravedad o no se aguanta; al frenar deja de superarla y cae, que es el
+  comportamiento buscado.
+- El motor gira a la **izquierda** con `st>0`; `readInput` niega la entrada para que D sea
+  derecha. Si tocas una de las dos partes, `test/arena.test.mjs` bloque 8 lo detecta.
 - Postes/travesaño usan `segCollide` (cápsulas), no planos. `inMouth(p,margin)` decide qué
   cuenta como boca de portería y por eso el balón puede salir del octágono ahí sin ser fuga.
 - `contactSpin` convierte velocidad tangencial en giro con `I=⅖mr²`; el efecto Magnus está
@@ -59,7 +73,7 @@ Motor arcade escrito a mano, sin librería de física. Puntos que se rompen fác
 
 ### Post-proceso
 
-El bundle CDN de r128 no trae `EffectComposer`, así que `Post` (línea ~1491) implementa a
+El bundle CDN de r128 no trae `EffectComposer`, así que `Post` (línea ~1589) implementa a
 mano render-target → bright-pass → dos octavas de blur separable → composición. No importar
 addons de Three; no existen en ese bundle.
 
@@ -69,22 +83,27 @@ Cancha, balón y público son texturas Canvas 2D generadas en carga (`fieldTextu
 `ballTex`, `crowdTexture`). Audio 100 % sintetizado con Web Audio en el IIFE `Snd`. No
 agregar archivos binarios al repo.
 
-## El test lee `index.html` por marcadores literales
+## Los tests leen `index.html` por marcadores literales
 
-`test/physics.test.mjs` no duplica el motor: recorta el `<script>` con `cut(from,to)` usando
-estas cadenas **exactas**. Renombrar o reformatear cualquiera rompe el test con
+Ningún banco duplica el motor: recortan el `<script>` con `cut(from,to)` usando estas
+cadenas **exactas**. Renombrar o reformatear cualquiera rompe el test con
 `marcador no encontrado`:
 
 ```
-'const S=1/50;'  →  'const CAR={'
-'const WALLS=[];{'  →  'const inMouth='
-'const inMouth='  →  '/* predicción compartida'
+physics:  'const S=1/50;'          →  'const CAR={'
+          'const WALLS=[];{'       →  'const inMouth='
+          'const inMouth='         →  '/* predicción compartida'
+arena:    'const S=1/50;'          →  'const TEAM=['                     (incluye CAR)
+          'const WALLS=[];{'       →  'const inMouth='
+          'const inMouth='         →  '/* predicción compartida'
+          'const _gn=new V3(0,1,0);' →  '/* ═══════════════ COCHE ↔ BALÓN'
 ```
 
-El código recortado se evalúa con `new Function` fuera del navegador, con solo este preámbulo
-stub: `V3`, `Q`, `clamp`, `rnd`, `Snd.wall()`, `spawnP()`. Si el código de física dentro de
-esos tramos empieza a usar otro global del navegador (`document`, `performance`, otro método
-de `Snd`, `lerp`), hay que añadir el stub al `preamble` del test.
+El código recortado se evalúa con `new Function` fuera del navegador, con un preámbulo stub:
+`V3`, `Q`, `clamp`, `rnd`, `lerp`, `Snd`, `spawnP()`, y en arena además `pads`, `state` y
+`respawn()`. Si el código de física dentro de esos tramos empieza a usar otro global del
+navegador (`document`, `performance`, una malla, otro método de `Snd`), hay que añadir el
+stub al `preamble` del banco correspondiente.
 
 ## Convenciones
 

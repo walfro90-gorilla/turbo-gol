@@ -6,7 +6,7 @@
   "type": "module",
   "scripts": {
     "start": "npx --yes serve .",
-    "test": "node test/physics.test.mjs"
+    "test": "node test/physics.test.mjs && node test/arena.test.mjs"
   },
   "keywords": ["game", "threejs", "webgl", "physics", "car-soccer", "juarez"],
   "license": "MIT",
