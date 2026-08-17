@@ -77,6 +77,14 @@ El bundle CDN de r128 no trae `EffectComposer`, así que `Post` (línea ~1589) i
 mano render-target → bright-pass → dos octavas de blur separable → composición. No importar
 addons de Three; no existen en ese bundle.
 
+### La arena se ve desde fuera
+
+La cámara del menú orbita **por fuera** del octágono, así que todo lo que se añada al muro
+tiene que dejar ver la cancha: las paredes son un cristal traslúcido y las curvas de unión
+son `FrontSide` con las normales hacia dentro. Ponerlas en `DoubleSide` tapa la arena entera
+en el menú. Sus normales son analíticas, no `computeVertexNormals()`, porque los vértices no
+se comparten entre cuadriláteros y saldrían facetadas.
+
 ### Sin assets binarios
 
 Cancha, balón y público son texturas Canvas 2D generadas en carga (`fieldTexture`,
