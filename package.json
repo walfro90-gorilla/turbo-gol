@@ -1,0 +1,16 @@
+{
+  "name": "turbo-gol",
+  "version": "1.0.0",
+  "description": "Fútbol de cohetes 3D en un solo archivo HTML. Motor de física arcade propio + Three.js.",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "start": "npx --yes serve .",
+    "test": "node test/physics.test.mjs"
+  },
+  "keywords": ["game", "threejs", "webgl", "physics", "car-soccer", "juarez"],
+  "license": "MIT",
+  "devDependencies": {
+    "three": "0.128.0"
+  }
+}
